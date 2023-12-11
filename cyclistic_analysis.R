@@ -1,226 +1,482 @@
-# Cyclistic Bike Analysis
+# Load libraries
+library(tidyverse)  # For calculations
+library(lubridate)  # For handling dates
+library(hms)        # For handling time
+library(data.table) # For exporting data frames
 
-# Load packages
-library(tidyverse)
-library(lubridate)
-library(ggplot2)
+# Specify the months
+months <- c("11", "12", "01", "02", "03", "04", "05", "06", "07", "08", "09", "10")
 
-# Set to working directory
-setwd("/Users/hoangnguyen/Documents/Projects/Cyclistic_Project")
+# Initialize an empty list to store data frames
+monthly_dfs <- list()
 
-# Import bike trip data (April 2022 to March 2023)
-apr2022_trip <- read_csv('202204-divvy-tripdata.csv')
-may2022_trip <- read_csv('202205-divvy-tripdata.csv')
-jun2022_trip <- read_csv('202206-divvy-tripdata.csv')
-jul2022_trip <- read_csv('202207-divvy-tripdata.csv')
-aug2022_trip <- read_csv('202208-divvy-tripdata.csv')
-sep2022_trip <- read_csv('202209-divvy-publictripdata.csv')
-oct2022_trip <- read_csv('202210-divvy-tripdata.csv')
-nov2022_trip <- read_csv('202211-divvy-tripdata.csv')
-dec2022_trip <- read_csv('202212-divvy-tripdata.csv')
-jan2023_trip <- read_csv('202301-divvy-tripdata.csv')
-feb2023_trip <- read_csv('202302-divvy-tripdata.csv')
-mar2023_trip <- read_csv('202303-divvy-tripdata.csv')
+# Specify the directory where the CSV files are located
+directory_path <- "E:/Portfolio_projects/Cyclistic"
 
-# Checking column names before merging data
-colnames(apr2022_trip)
-colnames(may2022_trip)
-colnames(jun2022_trip)
-colnames(jul2022_trip)
-colnames(aug2022_trip)
-colnames(sep2022_trip)
-colnames(oct2022_trip)
-colnames(nov2022_trip)
-colnames(dec2022_trip)
-colnames(jan2023_trip)
-colnames(feb2023_trip)
-colnames(mar2023_trip)
+# Loop through the months and read the corresponding CSV files
+for (month in months) {
+  # Adjust file naming for November and December
+  if (month %in% c("11", "12")) {
+    year_month <- paste0("2022", month)
+  } else {
+    year_month <- paste0("2023", month)
+  }
+  
+  file_name <- paste0(directory_path, "/", year_month, "-divvy-tripdata.csv")
+  df_name <- paste0(tolower(year_month), "_df")
+  
+  # Use tryCatch to handle errors
+  tryCatch({
+    if (file.exists(file_name)) {
+      monthly_dfs[[df_name]] <- read_csv(file_name)
+    } else {
+      warning(paste("File not found:", file_name))
+    }
+  }, error = function(e) {
+    warning(paste("Error reading file:", file_name, "\n", conditionMessage(e)))
+  })
+}
 
-## PROCESS
-# Merge the data
-trip_data = rbind(apr2022_trip, may2022_trip, jun2022_trip, jul2022_trip, aug2022_trip, sep2022_trip, oct2022_trip, nov2022_trip, dec2022_trip, jan2023_trip, feb2023_trip, mar2023_trip)
+# Assign the data frames to individual variables
+list2env(monthly_dfs, envir = .GlobalEnv)
 
-head(trip_data)
-str(trip_data)
-View(trip_data)
-nrow(trip_data)
+# Merge all of the data frames into one year view
+cyclistic_df <- do.call(rbind, monthly_dfs)
 
+# Remove individual month data frames (excluding cyclistic_df) to clear up space in the environment 
+rm(list = setdiff(ls(), "cyclistic_df"))
 
-# Create date, month, day, year, and day_of_week 
-trip_data$date <- as.Date(trip_data$started_at) 
-trip_data$month <- format(as.Date(trip_data$date), "%m")
-trip_data$day <- format(as.Date(trip_data$date), "%d")
-trip_data$year <- format(as.Date(trip_data$date), "%Y")
-trip_data$day_of_week <- format(as.Date(trip_data$date), "%A")
+# Create a new data frame to contain new columns
+cyclistic_date <- data.frame(cyclistic_df)
 
-# Remove unnecessary columns
-trip_data <- trip_data %>%
-  select(-c(start_lat,start_lng,end_lat,end_lng))
+# Calculate ride length by subtracting ended_at time from started_at time and convert it to minutes
+cyclistic_date$ride_length <- difftime(cyclistic_date$ended_at, cyclistic_date$started_at, units = "mins")
 
+# Create columns for: day of week, month, day, year, time, hour
+cyclistic_date$date <- as.Date(cyclistic_date$started_at)  # Default format is yyyy-mm-dd, use start date
+cyclistic_date$day_of_week <- format(cyclistic_date$date, "%A")  # Create column for day of week
+cyclistic_date$month <- format(cyclistic_date$date, "%m")  # Create column for month
+cyclistic_date$day <- format(cyclistic_date$date, "%d")  # Create column for day
+cyclistic_date$year <- format(cyclistic_date$date, "%Y")  # Create column for year
 
-# Count the total of missing values in the dataset
-sum(is.na(trip_data))
+# Format time as HH:MM:SS and create columns for time and hour
+cyclistic_date$started_at <- as.POSIXct(cyclistic_date$started_at, format="%Y-%m-%d %H:%M:%S")
+cyclistic_date$time <- format(cyclistic_date$started_at, "%H:%M:%S")  # Create column for time
+cyclistic_date$hour <- hour(cyclistic_date$started_at)  # Create column for hour
 
-# Remove all the missing values
-trip_data_clean <- na.omit(trip_data)
+# Create column for different seasons: Spring, Summer, Fall, Winter
+cyclistic_date <- cyclistic_date %>% mutate(
+  # Using case_when to assign seasons based on the month
+  season = case_when(
+    month %in% c("03", "04", "05") ~ "Spring",  # March, April, May
+    month %in% c("06", "07", "08") ~ "Summer",  # June, July, August
+    month %in% c("09", "10", "11") ~ "Fall",    # September, October, November
+    month %in% c("12", "01", "02") ~ "Winter"   # December, January, February
+  )
+)
 
-# Count number of duplicate rows
-nrow(trip_data_clean[duplicated(trip_data_clean), ])
+# Create column for different time_of_day: Night, Morning, Afternoon, Evening
+cyclistic_date <- cyclistic_date %>% mutate(
+  # Using case_when to assign time_of_day based on the hour
+  time_of_day = case_when(
+    hour %in% c("0", "1", "2", "3", "4", "5") ~ "Night",            # 12:00 AM - 5:59 AM
+    hour %in% c("6", "7", "8", "9", "10", "11") ~ "Morning",        # 6:00 AM - 11:59 AM
+    hour %in% c("12", "13", "14", "15", "16", "17") ~ "Afternoon",  # 12:00 PM - 5:59 PM
+    hour %in% c("18", "19", "20", "21", "22", "23") ~ "Evening"     # 6:00 PM - 11:59 PM
+  )
+)
 
-# Create a ride_length column in minutes
-trip_data_clean$ride_length <- round(difftime(trip_data_clean$ended_at,trip_data_clean$started_at,units='mins'),2)
+# Clean the data
 
-# Change the the data type of ride_length to numeric for calculations
-trip_data_clean$ride_length <- as.numeric(as.character(trip_data_clean$ride_length))
+# Remove rows with NA values
+cyclistic_date <- na.omit(cyclistic_date)
 
-# Count number of negative values in ride_length
-nrow(trip_data_clean[trip_data_clean$ride_length<0,])
+# Remove duplicate rows
+cyclistic_date <- distinct(cyclistic_date)
 
-# Order the day of week column
-trip_data_clean$day_of_week <- ordered(trip_data_clean$day_of_week, 
-                                    levels=c("Sunday", "Monday", "Tuesday", "Wednesday", 
-                                             "Thursday", "Friday", "Saturday"))
+# Remove rows where ride_length is 0 or negative
+cyclistic_date <- cyclistic_date[!(cyclistic_date$ride_length <= 0),]
 
-# Remove rows with negative and zero values from ride_length
-trip_data_clean <- trip_data_clean[!(trip_data_clean$ride_length<0 | trip_data_clean$ride_length==0),]
+# Remove columns not needed: ride_id, start_station_id, end_station_id, start_lat, start_long, end_lat, end_lng
+cyclistic_date <- cyclistic_date %>%
+  select(-c(ride_id, start_station_id, end_station_id, start_lat, start_lng, end_lat, end_lng))
 
-## ANALYZE
+# View the final data
+View(cyclistic_date)
 
-# Perform descriptive analysis
-summary(trip_data_clean$ride_length)
+#-----------------------------------------TOTAL RIDES--------------------------------------
 
+# Calculate the total number of rides
+total_rides <- nrow(cyclistic_date)
 
-# Compute the minimum, mean, maximum and difference (max - min) of ride length for member and causal riders
-trip_data_clean %>% 
+#-----------------MEMBER TYPE---------------------
+
+# Count the number of rides for each member type
+member_type_counts <- cyclistic_date %>%
   group_by(member_casual) %>% 
-  summarise(lower_ride_length = min(ride_length), average_ride_length = mean(ride_length),
-            upper_ride_length = max(ride_length), difference_ride_length = max(ride_length) - min(ride_length))
+  count(member_casual)
 
-View(trip_data_clean)
+#----------------TYPE OF BIKE---------------------
 
+# Count the rides for each member type and bike type
+bike_type_counts_by_member <- cyclistic_date %>%
+  group_by(member_casual, rideable_type) %>% 
+  count(rideable_type)
 
-
-## TOTAL NUMBER OF RIDES
-
-# Count each member type (member vs. casual)
-trip_data_clean %>%
-  group_by(member_casual) %>% 
-  summarise(total_count = n())
-
-# Count number of each bike type
-trip_data_clean %>% 
+# Count the total rides for each bike type
+total_bike_type_counts <- cyclistic_date %>%
   group_by(rideable_type) %>% 
-  summarise(total_count = n())
+  count(rideable_type)
 
-# Count the number for each type of bike for each user type
-trip_data_clean %>% 
-  group_by(member_casual, rideable_type) %>% 
-  summarise(total_count = n())
+#-------------------HOUR--------------------------
 
-# Count number of rides by month and year
-trip_data_clean %>% 
-  group_by(month,year) %>% 
-  summarise(total_count = n()) %>% 
-  arrange(year)
+# Total rides by member type per hour
+rides_by_member_type_per_hour <- cyclistic_date %>%
+  group_by(member_casual, hour) %>% 
+  count() %>% 
+  print(n = Inf, na.print = "NA") # Print entire tibble and handle NA values
 
-# Count number of rides by weekday
-trip_data_clean %>% 
+# Total rides per hour
+total_rides_per_hour <- cyclistic_date %>%
+  count(hour) %>% 
+  print(n = Inf, na.print = "NA") # Print entire tibble and handle NA values
+
+#----------------------TIME OF DAY-----------------------
+
+# Define a function to calculate total rides for a specific time_of_day
+total_rides_by_time_of_day <- function(data, time_of_day) {
+  data %>%
+    filter(time_of_day == time_of_day) %>% 
+    count(member_casual, time_of_day) %>% 
+    print()
+}
+
+# Calculate and print total rides for each time_of_day
+time_of_day_list <- c("Morning", "Afternoon", "Evening", "Night")
+
+for (time in time_of_day_list) {
+  total_rides_by_time_of_day(cyclistic_date, time)
+}
+
+# Calculate and print total rides for all times of day
+cyclistic_date %>%
+  group_by(member_casual, time_of_day) %>% 
+  count() %>% 
+  print()
+
+# Calculate and print total rides for each time_of_day without grouping by member_casual
+cyclistic_date %>%
+  group_by(time_of_day) %>% 
+  count() %>% 
+  print()
+
+#----------------DAY OF THE WEEK------------------
+
+# Total rides by member type and day_of_week
+cyclistic_date %>%
   group_by(member_casual, day_of_week) %>% 
-  summarise(total_count = n()) 
+  count() %>% 
+  print()
 
-## AVERAGE RIDE LENGTH
+# Total rides by day_of_week
+cyclistic_date %>%
+  group_by(day_of_week) %>% 
+  count() %>% 
+  print()
 
-# Avg ride length by bike type
-trip_data_clean %>% 
+#----------------DAY OF THE MONTH-----------------
+
+# Total rides by member type and day
+cyclistic_date %>%
+  group_by(member_casual, day) %>% 
+  count() %>% 
+  print(n = 62)
+
+# Total rides by day
+cyclistic_date %>%
+  group_by(day) %>% 
+  count() %>% 
+  print(n = 31)
+
+#---------------------MONTH-----------------------
+
+# Total rides by member type and month
+cyclistic_date %>%
+  group_by(member_casual, month) %>% 
+  count() %>% 
+  mutate(month = month.name[as.numeric(month)]) %>%  # Convert numeric month to month name
+  print(n = 24)
+
+# Total rides by month
+cyclistic_date %>%
+  group_by(month) %>% 
+  count() %>% 
+  mutate(month = month.name[as.numeric(month)]) %>%  # Convert numeric month to month name
+  print(n = 12)
+
+#--------------------SEASON-----------------------
+
+# Function to calculate total rides by season
+calculate_season_rides <- function(data, season) {
+  data %>%
+    group_by(member_casual) %>% 
+    filter(season == season) %>% 
+    count(season)
+}
+
+#-----spring-------
+spring_rides_by_member <- calculate_season_rides(cyclistic_date, "Spring")
+spring_total_rides <- calculate_season_rides(cyclistic_date, "Spring")
+
+#-----summer-------
+summer_rides_by_member <- calculate_season_rides(cyclistic_date, "Summer")
+summer_total_rides <- calculate_season_rides(cyclistic_date, "Summer")
+
+#-----fall-------
+fall_rides_by_member <- calculate_season_rides(cyclistic_date, "Fall")
+fall_total_rides <- calculate_season_rides(cyclistic_date, "Fall")
+
+#-----winter-------
+winter_rides_by_member <- calculate_season_rides(cyclistic_date, "Winter")
+winter_total_rides <- calculate_season_rides(cyclistic_date, "Winter")
+
+#-----all seasons-------
+
+# Total rides by member type and season
+all_season_rides_by_member <- cyclistic_date %>%
+  group_by(season, member_casual) %>% 
+  count(season)
+
+# Total rides by season
+all_season_total_rides <- cyclistic_date %>%
+  group_by(season) %>% 
+  count(season)
+
+#------------------------------------AVERAGE RIDE LENGTH-----------------------------------
+
+# Print the average of ride_length
+print(mean(cyclistic_date$ride_length))
+
+#------------------MEMBER TYPE--------------------
+
+# Average ride length by member type
+cyclistic_date %>%
+  group_by(member_casual) %>% 
+  summarise(across(ride_length, mean, .names = "{.col}_avg"))
+
+#----------------TYPE OF BIKE---------------------
+
+# Total rides by member type and rideable type
+total_rides_by_type <- cyclistic_date %>%
+  group_by(member_casual, rideable_type) %>% 
+  summarise(total_rides = n())
+
+# Average ride length by member type and rideable type
+average_ride_length_by_type <- cyclistic_date %>%
+  group_by(member_casual, rideable_type) %>% 
+  summarise(average_ride_length = mean(ride_length))
+
+# Total rides by rideable type
+total_rides_by_rideable <- cyclistic_date %>%
   group_by(rideable_type) %>% 
-  summarise(avg_ride_length = mean(ride_length))
+  summarise(total_rides = n())
 
-# Avg ride length by member type
-trip_data_clean %>% 
+# Average ride length by rideable type
+average_ride_length_by_rideable <- cyclistic_date %>%
+  group_by(rideable_type) %>% 
+  summarise(average_ride_length = mean(ride_length))
+
+#-----------------------HOUR-------------------------
+
+# Calculate the average ride length by member type and hour
+average_ride_by_hour_member <- cyclistic_date %>% 
+  group_by(hour, member_casual) %>% 
+  summarise_at(vars(ride_length), list(time = mean)) %>% 
+  print(n = 10)  # Display the first 10 rows
+
+# Calculate the average ride length by hour
+average_ride_by_hour <- cyclistic_date %>% 
+  group_by(hour) %>% 
+  summarise_at(vars(ride_length), list(time = mean)) %>% 
+  print(n = 10)  # Display the first 10 rows
+
+#--------------------TIME OF DAY---------------------
+
+#----morning----
+
+# Calculate the average ride length by member type in the morning
+average_ride_morning_member <- cyclistic_date %>% 
   group_by(member_casual) %>% 
-  summarise(avg_ride_length = mean(ride_length))
+  filter(time_of_day == "Morning") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
 
-# Avg ride length by member type and bike type
-trip_data_clean %>% 
-  group_by(member_casual, rideable_type) %>% 
-  summarise(avg_ride_length = mean(ride_length))
+# Calculate the overall average ride length in the morning
+average_ride_morning <- cyclistic_date %>% 
+  filter(time_of_day == "Morning") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
 
-# Avg ride length by member type and day of week
-trip_data_clean %>% 
-  group_by(member_casual, day_of_week) %>% 
-  summarise(avg_ride_length = mean(ride_length)) 
+#----afternoon----
 
-# Avg ride length by member type and year
-trip_data_clean %>% 
-  group_by(member_casual,year) %>% 
-  summarise(avg_ride_length = mean(ride_length))
-
-
-## VISUALIZE 
-options(scipen=999)
-
-member_perc <- trip_data_clean %>%
-  group_by(member_casual) %>%
-  summarise(count = n()) %>%
-  mutate(perc=count/sum(count)) %>% 
-  ungroup() 
-
-# Create a pie chart that shows the distribution of member types  
-ggplot(member_perc, aes(x="", y=perc, fill=member_casual)) +
-  geom_bar(stat="identity", width=1,color="white") +
-  coord_polar("y", start=0) +
-  geom_text(aes(label = scales::percent(perc)),
-  position = position_stack(vjust = 0.5)) +
-  theme_void()
-  
-  
-# Total rides based on member types and bike types
-trip_data_clean %>%
-  group_by(member_casual, rideable_type) %>% 
-  summarise(total_count = n()) %>% 
-  ggplot(aes(x=rideable_type, y = total_count, fill=member_casual)) +
-  geom_bar(position="dodge", stat="identity",color="black",width=0.7) +
-  labs(title = "Total Number of Rides by Bike and Member Types", x='Type of Bikes', y='Number of Rides')+
-  theme_classic()
-
-# Total rides based on member types and day of week
-trip_data_clean %>% 
-  group_by(member_casual, day_of_week) %>% 
-  summarise(total_count = n()) %>% 
-  ggplot(aes(x=day_of_week, y=total_count, fill=member_casual)) +
-  geom_bar(position="dodge", stat='identity',color="black",width=0.7) +
-  labs(title = "Total Number of Rides by Member Types and Day of Week",x='Day of Week',y='Number of Rides')+
-  theme_classic()
-
-
-# Total rides based on member types and months
-trip_data_clean %>%
-  group_by(member_casual, month) %>%
-  summarise(total_count = n()) %>% 
-  ggplot(aes(x=month, y = total_count, fill=member_casual)) +
-  geom_bar(position="dodge", stat="identity",color="black",width=0.7)+
-  labs(title = 'Total Number of Rides by Member Types and Months',x='Month',y='Number of Rides')+
-  theme_classic()
-
-
-# Average ride length by member types
-trip_data_clean %>% 
+# Calculate the average ride length by member type in the afternoon
+average_ride_afternoon_member <- cyclistic_date %>% 
   group_by(member_casual) %>% 
-  summarise(avg_ride_length = mean(ride_length)) %>% 
-  ggplot(aes(x=member_casual, y=avg_ride_length, fill=member_casual)) +
-  geom_bar(position="dodge", stat="identity",color="black",width=0.5) +
-  labs(title = 'Average Ride Duration Spent by Member Types',x='Type of Members',y='Average Ride Duration (mins)')+
-  theme_classic()
-  
-# Average ride length by member and ride types
-trip_data_clean %>% 
-  group_by(member_casual,rideable_type) %>% 
-  summarise(avg_ride_length = mean(ride_length)) %>% 
-  ggplot(aes(x=rideable_type, y=avg_ride_length, fill=rideable_type))+
-  geom_bar(position="dodge", stat="identity",color="black",width=0.5)+
-  facet_wrap(~member_casual)+
-  labs(title = 'Average Ride Duration Spent by Member and Bike Types', x='Type of Bikes', y='Average Ride Duration (mins)')+
-  theme_bw()
+  filter(time_of_day == "Afternoon") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length in the afternoon
+average_ride_afternoon <- cyclistic_date %>% 
+  filter(time_of_day == "Afternoon") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#----evening----
+
+# Calculate the average ride length by member type in the evening
+average_ride_evening_member <- cyclistic_date %>% 
+  group_by(member_casual) %>% 
+  filter(time_of_day == "Evening") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length in the evening
+average_ride_evening <- cyclistic_date %>% 
+  filter(time_of_day == "Evening") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#----night----
+
+# Calculate the average ride length by member type at night
+average_ride_night_member <- cyclistic_date %>% 
+  group_by(member_casual) %>% 
+  filter(time_of_day == "Night") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length at night
+average_ride_night <- cyclistic_date %>% 
+  filter(time_of_day == "Night") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#---all times of day---
+
+# Calculate the average ride length by member type for all times of day
+average_ride_all_times_member <- cyclistic_date %>% 
+  group_by(time_of_day, member_casual) %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length for all times of day
+average_ride_all_times <- cyclistic_date %>% 
+  group_by(time_of_day) %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#-------------------DAY OF THE WEEK-----------------
+
+# Calculate the average ride length by member type for each day of the week
+average_ride_day_of_week_member <- cyclistic_date %>% 
+  group_by(member_casual, day_of_week) %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length for each day of the week
+average_ride_day_of_week <- cyclistic_date %>% 
+  group_by(day_of_week) %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#-----------------DAY OF THE MONTH------------------
+
+# Calculate the average ride length by member type for each day of the month
+average_ride_day_member <- cyclistic_date %>% 
+  group_by(day, member_casual) %>% 
+  summarise_at(vars(ride_length), list(time = mean)) %>% 
+  print(n=62)  # Lets you view the entire tibble
+
+# Calculate the overall average ride length for each day of the month
+average_ride_day <- cyclistic_date %>% 
+  group_by(day) %>% 
+  summarise_at(vars(ride_length), list(time = mean)) %>% 
+  print(n=31)  # Lets you view the entire tibble
+
+#---------------------MONTH--------------------------
+
+# Calculate the average ride length by member type for each month
+average_ride_month_member <- cyclistic_date %>% 
+  group_by(month, member_casual) %>% 
+  summarise_at(vars(ride_length), list(time = mean)) %>% 
+  print(n=24)  # Lets you view the entire tibble
+
+# Calculate the overall average ride length for each month
+average_ride_month <- cyclistic_date %>% 
+  group_by(month) %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#----------------------SEASON-------------------------
+
+#-----spring------
+
+# Calculate the average ride length by member type for spring
+average_ride_spring_member <- cyclistic_date %>% 
+  group_by(member_casual) %>% 
+  filter(season == "Spring") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length for spring
+average_ride_spring <- cyclistic_date %>% 
+  filter(season == "Spring") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#-----summer------
+
+# Calculate the average ride length by member type for summer
+average_ride_summer_member <- cyclistic_date %>% 
+  group_by(member_casual) %>% 
+  filter(season == "Summer") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length for summer
+average_ride_summer <- cyclistic_date %>% 
+  filter(season == "Summer") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#-----fall------
+
+# Calculate the average ride length by member type for fall
+average_ride_fall_member <- cyclistic_date %>% 
+  group_by(member_casual) %>% 
+  filter(season == "Fall") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length for fall
+average_ride_fall <- cyclistic_date %>% 
+  filter(season == "Fall") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#-----winter-----
+
+# Calculate the average ride length by member type for winter
+average_ride_winter_member <- cyclistic_date %>% 
+  group_by(member_casual) %>% 
+  filter(season == "Winter") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length for winter
+average_ride_winter <- cyclistic_date %>% 
+  filter(season == "Winter") %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+#----all seasons----
+
+# Calculate the average ride length by member type for all seasons
+average_ride_all_seasons_member <- cyclistic_date %>% 
+  group_by(season, member_casual) %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+# Calculate the overall average ride length for all seasons
+average_ride_all_seasons <- cyclistic_date %>% 
+  group_by(season) %>% 
+  summarise_at(vars(ride_length), list(time = mean))
+
+
+
+
+
+
+
 
 
 
